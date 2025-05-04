@@ -5,344 +5,209 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import time
-# Import our modules
+
+# Import modules
 from data_fetcher import fetch_gold_data_alpha_vantage as fetch_gold_data
-from technical_analysis import add_indicators, identify_support_resistance, identify_patterns, generate_signals
+from technical_analysis import add_indicators, generate_signals, identify_support_resistance, identify_patterns
 from telegram_bot import TelegramNotifier
+import talib
 
-st.set_page_config(
-    page_title="Gold Trading Dashboard",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Gold Trading Dashboard", layout="wide")
+st.title("📈 Live XAU/USD Trading Dashboard")
 
-# Sidebar for settings
-st.sidebar.title("Settings")
-# Data settings
-st.sidebar.subheader("Data Settings")
+# Sidebar Settings
+st.sidebar.header("Settings")
+
+# Time Period Selector
 period = st.sidebar.selectbox(
-    "Time Period",
-    options=["1d", "5d", "1mo", "3mo", "6mo", "1y"],
-    index=2
+    "Select Time Period",
+    ["1d", "2d", "3d", "5d", "7d", "30d", "1mo", "3mo", "6mo", "1y"],
+    index=3
 )
-interval = st.sidebar.selectbox(
-    "Interval",
-    options=["1m", "5m", "15m", "30m", "1h", "1d"],
-    index=4
-)
-# Technical indicators settings
-st.sidebar.subheader("Technical Indicators")
-show_sma = st.sidebar.checkbox("Show SMA", value=True)
-show_ema = st.sidebar.checkbox("Show EMA", value=True)
-show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
-show_support_resistance = st.sidebar.checkbox("Show Support/Resistance", value=True)
-show_patterns = st.sidebar.checkbox("Show Patterns", value=True)
-# Telegram settings
-st.sidebar.subheader("Telegram Notifications")
-enable_telegram = st.sidebar.checkbox("Enable Telegram Alerts", value=False)
+
+interval_options = {
+    "1d": "1m",
+    "2d": "5m",
+    "3d": "5m",
+    "5d": "15m",
+    "7d": "15m",
+    "30d": "1h",
+    "1mo": "1h",
+    "3mo": "1d",
+    "6mo": "1d",
+    "1y": "1d"
+}
+interval = interval_options.get(period, "1d")
+
+# Telegram Alerts
+enable_telegram = st.sidebar.checkbox("Enable Telegram Alerts")
+notifier = None
 if enable_telegram:
     telegram_token = st.sidebar.text_input("Telegram Bot Token", type="password")
-    telegram_chat_id = st.sidebar.text_input("Telegram Chat ID")
-    if telegram_token and telegram_chat_id:
-        notifier = TelegramNotifier(token=telegram_token, chat_id=telegram_chat_id)
+    chat_id = st.sidebar.text_input("Telegram Chat ID")
+    if telegram_token and chat_id:
+        notifier = TelegramNotifier(telegram_token, chat_id)
     else:
-        st.sidebar.warning("Please enter both Telegram Bot Token and Chat ID to enable notifications")
-        enable_telegram = False
+        st.sidebar.warning("Enter both Telegram Bot Token and Chat ID to enable alerts")
 
-# Main dashboard
-st.title("Gold Trading Dashboard")
+def identify_patterns(df):
+    """Detect candlestick patterns using TA-Lib"""
+    patterns = {}
+    
+    if len(df) < 14:
+        return patterns
+    
+    try:
+        hammer = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
+        engulfing = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])
+        shooting_star = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
+        
+        if (hammer != 0).any():
+            patterns['Hammer'] = hammer[hammer != 0].index.tolist()
+        if (engulfing != 0).any():
+            patterns['Engulfing'] = engulfing[engulfing != 0].index.tolist()
+        if (shooting_star != 0).any():
+            patterns['Shooting Star'] = shooting_star[shooting_star != 0].index.tolist()
+
+    except Exception as e:
+        st.warning(f"Pattern detection failed: {e}")
+
+    return patterns
+
 
 def create_dashboard():
-    # Fetch data
-    with st.spinner("Fetching latest gold data..."):
-        df = fetch_gold_data(period=period, interval=interval)
+    # Weekend check
+    today = datetime.today().weekday()
+    if today >= 5:  # Saturday/Sunday
+        st.warning("⚠️ Market is closed (Weekend). No live data available.")
+        df = fetch_gold_data(period="5d", interval="1h")  # Fallback
+    else:
+        with st.spinner("Fetching latest gold data..."):
+            df = fetch_gold_data(period=period, interval=interval)
+
     if df.empty:
-        st.error("Failed to fetch data. Please check your internet connection and try again.")
-        return
-    
-    # Add technical indicators
-    with st.spinner("Calculating technical indicators..."):
-        df = add_indicators(df)
-        df = generate_signals(df)
-    
-    # Identify support and resistance levels
-    if show_support_resistance:
-        support_levels, resistance_levels = identify_support_resistance(df)
-    
-    # Identify patterns
-    if show_patterns:
-        patterns = identify_patterns(df)
-    
-    # Create main chart
-    fig = make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        row_heights=[0.6, 0.2, 0.2],
-        subplot_titles=("XAU/USD Price", "Volume", "RSI")
-    )
-    
-    # Add candlestick chart
-    fig.add_trace(
-        go.Candlestick(
-            x=df['Datetime'],
-            open=df['Open'],
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            name="XAU/USD"
-        ),
-        row=1, col=1
-    )
-    
-    # Add moving averages
-    if show_sma:
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['SMA_20'],
-                name="SMA 20",
-                line=dict(color='blue', width=1),
-                visible='legendonly'  # Initially hidden in legend
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['SMA_50'],
-                name="SMA 50",
-                line=dict(color='orange', width=1),
-                visible='legendonly'
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['SMA_200'],
-                name="SMA 200",
-                line=dict(color='purple', width=1),
-                visible='legendonly'
-            ),
-            row=1, col=1
-        )
-    
-    if show_ema:
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['EMA_20'],
-                name="EMA 20",
-                line=dict(color='green', width=1),
-                visible='legendonly'
-            ),
-            row=1, col=1
-        )
-    
-    # Add Bollinger Bands
-    if show_bollinger:
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['BB_Upper'],
-                name="BB Upper",
-                line=dict(color='rgba(250, 0, 0, 0.5)', width=1),
-                visible='legendonly'
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['BB_Middle'],
-                name="BB Middle",
-                line=dict(color='rgba(0, 0, 250, 0.5)', width=1),
-                visible='legendonly'
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=df['Datetime'],
-                y=df['BB_Lower'],
-                name="BB Lower",
-                line=dict(color='rgba(0, 250, 0, 0.5)', width=1),
-                visible='legendonly'
-            ),
-            row=1, col=1
-        )
-    
-    # Add volume chart
-    fig.add_trace(
-        go.Bar(
-            x=df['Datetime'],
-            y=df['Volume'],
-            name="Volume",
-            marker_color='rgba(0, 0, 250, 0.5)',
-            visible='legendonly'
-        ),
-        row=2, col=1
-    )
-    
-    # Add RSI
-    fig.add_trace(
-        go.Scatter(
-            x=df['Datetime'],
-            y=df['RSI'],
-            name="RSI",
-            line=dict(color='purple', width=1),
-            visible='legendonly'
-        ),
-        row=3, col=1
-    )
-    
-    # Add RSI overbought/oversold lines
-    fig.add_shape(
-        type="line",
-        x0=df['Datetime'].iloc[0],
-        y0=70,
-        x1=df['Datetime'].iloc[-1],
-        y1=70,
-        line=dict(color="red", width=1, dash="dash"),
-        row=3, col=1
-    )
-    fig.add_shape(
-        type="line",
-        x0=df['Datetime'].iloc[0],
-        y0=30,
-        x1=df['Datetime'].iloc[-1],
-        y1=30,
-        line=dict(color="green", width=1, dash="dash"),
-        row=3, col=1
-    )
-    
-    # Add support and resistance levels
-    if show_support_resistance:
-        for level in support_levels:
-            fig.add_shape(
-                type="line",
-                x0=df['Datetime'].iloc[0],
-                y0=level,
-                x1=df['Datetime'].iloc[-1],
-                y1=level,
-                line=dict(color="green", width=1, dash="dash"),
-                row=1, col=1
-            )
-        for level in resistance_levels:
-            fig.add_shape(
-                type="line",
-                x0=df['Datetime'].iloc[0],
-                y0=level,
-                x1=df['Datetime'].iloc[-1],
-                y1=level,
-                line=dict(color="red", width=1, dash="dash"),
-                row=1, col=1
-            )
-    
-    # Add patterns
-    if show_patterns and patterns:
-        for pattern_name, indices in patterns.items():
-            for idx in indices:
-                fig.add_annotation(
-                    x=df.loc[idx, 'Datetime'],
-                    y=df.loc[idx, 'High'] + 5,  # Offset above the candle
-                    text=pattern_name,
-                    showarrow=True,
-                    arrowhead=1,
-                    row=1, col=1
-                )
-    
-    # Update layout
-    fig.update_layout(
-        height=800,
-        title_text="XAU/USD Trading Chart",
-        xaxis_rangeslider_visible=False,
-        template="plotly_dark",
-        updatemenus=[
-            dict(
-                buttons=list([
-                    dict(
-                        label="All Indicators",
-                        method="update",
-                        args=[{"visible": [True] * len(fig.data)}]
-                    ),
-                    dict(
-                        label="Candles Only",
-                        method="update",
-                        args=[{"visible": [True] + [False] * (len(fig.data) - 1)}]
-                    ),
-                    dict(
-                        label="SMA & EMA",
-                        method="update",
-                        args=[{"visible": [True] + [trace.name.startswith(("SMA", "EMA")) for trace in fig.data[1:]]}]
-                    ),
-                    dict(
-                        label="Bollinger Bands",
-                        method="update",
-                        args=[{"visible": [True] + [trace.name.startswith("BB") for trace in fig.data[1:]]}]
-                    ),
-                    dict(
-                        label="Volume",
-                        method="update",
-                        args=[{"visible": [True] + [trace.name == "Volume" for trace in fig.data[1:]]}]
-                    ),
-                    dict(
-                        label="RSI",
-                        method="update",
-                        args=[{"visible": [True] + [trace.name == "RSI" for trace in fig.data[1:]]}]
-                    )
-                ]),
-                direction="down",
-                pad={"r": 10, "t": 10},
-                showactive=True,
-                x=0.1,
-                xanchor="left",
-                y=1.1,
-                yanchor="top"
-            )
-        ]
-    )
-    
-    # Display the chart
+        st.error("Failed to fetch data. Check internet connection.")
+        df = pd.DataFrame({
+            'datetime': pd.date_range(end=pd.Timestamp.today(), periods=50, freq='H'),
+            'open': np.random.uniform(2300, 2350, 50),
+            'high': np.random.uniform(2300, 2350, 50),
+            'low': np.random.uniform(2300, 2350, 50),
+            'close': np.random.uniform(2300, 2350, 50),
+            'volume': np.random.randint(10000, 100000, 50)
+        })
+
+    df = add_indicators(df)
+    df = generate_signals(df)
+
+    # Identify support/resistance and patterns
+    support_levels, resistance_levels = identify_support_resistance(df)
+    patterns = identify_patterns(df)
+
+    # Show Chart
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                        subplot_titles=("Price", "Volume", "RSI"),
+                        vertical_spacing=0.05,
+                        row_heights=[0.6, 0.2, 0.2])
+
+    fig.add_trace(go.Candlestick(
+        x=df['datetime'],
+        open=df['open'],
+        high=df['high'],
+        low=df['low'],
+        close=df['close'],
+        name="Candlesticks"
+    ), row=1, col=1)
+
+    fig.add_trace(go.Bar(x=df['datetime'], y=df['volume'], name="Volume"), row=2, col=1)
+
+    if 'rsi' in df.columns:
+        fig.add_trace(go.Scatter(x=df['datetime'], y=df['rsi'], name="RSI"), row=3, col=1)
+        fig.add_hline(y=70, row=3, col=1, line_dash="dash", line_color="red")
+        fig.add_hline(y=30, row=3, col=1, line_dash="dash", line_color="green")
+
+    # Moving Averages
+    if 'sma_20' in df.columns:
+        fig.add_trace(go.Scatter(x=df['datetime'], y=df['sma_20'], name="SMA 20"), row=1, col=1)
+    if 'sma_50' in df.columns:
+        fig.add_trace(go.Scatter(x=df['datetime'], y=df['sma_50'], name="SMA 50"), row=1, col=1)
+    if 'ema_20' in df.columns:
+        fig.add_trace(go.Scatter(x=df['datetime'], y=df['ema_20'], name="EMA 20"), row=1, col=1)
+
+    # Bollinger Bands
+    if 'bb_upper' in df.columns and 'bb_lower' in df.columns:
+        fig.add_trace(go.Scatter(x=df['datetime'], y=df['bb_upper'], name="BB Upper"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['datetime'], y=df['bb_lower'], name="BB Lower"), row=1, col=1)
+
+    # Support & Resistance
+    for level in support_levels:
+        fig.add_shape(type="line", x0=df['datetime'].iloc[0], y0=level,
+                      x1=df['datetime'].iloc[-1], y1=level,
+                      line=dict(color="green", dash="dash"), row=1, col=1)
+    for level in resistance_levels:
+        fig.add_shape(type="line", x0=df['datetime'].iloc[0], y0=level,
+                      x1=df['datetime'].iloc[-1], y1=level,
+                      line=dict(color="red", dash="dash"), row=1, col=1)
+
+    # Candlestick Patterns
+    for pattern_name, indices in patterns.items():
+        for idx in indices:
+            fig.add_annotation(x=df.loc[idx, 'datetime'],
+                               y=df.loc[idx, 'high'] + 5,
+                               text=pattern_name,
+                               showarrow=True,
+                               arrowhead=1,
+                               row=1, col=1)
+
+    fig.update_layout(height=800, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
-    
-    # Display current signals
-    st.subheader("Current Trading Signals")
-    # Get the latest signal
+
+    # Display Latest Signal
     latest_signal = df.iloc[-1]
-    # Check if latest_signal has a 'Signal' key, if not, create it based on other signals
-    if 'Signal' not in latest_signal:
-        # Determine signal based on other columns that do exist
-        if 'signal_combined' in latest_signal:
-            if latest_signal['signal_combined'] > 0:
-                latest_signal['Signal'] = 'BUY'
-            elif latest_signal['signal_combined'] < 0:
-                latest_signal['Signal'] = 'SELL'
-            else:
-                latest_signal['Signal'] = 'HOLD'
-        else:
-            # Default if we can't determine
-            latest_signal['Signal'] = 'HOLD'
-    signal_color = "green" if latest_signal['Signal'] == "BUY" else "red" if latest_signal['Signal'] == "SELL" else "gray"
-    st.markdown(f"<h1 style='text-align: center; color: {signal_color};'>{latest_signal['Signal']}</h1>", unsafe_allow_html=True)
-    st.markdown(f"<h3 style='text-align: center;'>Signal Strength: {latest_signal['Signal_Strength']:.2f}</h3>", unsafe_allow_html=True)
-    
-    # Display recent signals history
-    st.subheader("Recent Signals History")
-    signals_df = df[['Datetime', 'Close', 'Signal', 'Signal_Strength', 'RSI', 'MACD']].tail(10)
-    signals_df = signals_df.rename(columns={'Datetime': 'Time', 'Close': 'Price'})
+    st.subheader("Current Signal")
+    signal_color = "green" if latest_signal['signal'] == 'BUY' else "red" if latest_signal['signal'] == 'SELL' else "gray"
+    st.markdown(f"<h2 style='color:{signal_color}'>{latest_signal['signal']}</h2>", unsafe_allow_html=True)
+
+    # Send Telegram Alert on Signal Change
+    if enable_telegram and notifier:
+        if 'signal' in df.columns and len(df) > 1:
+            prev_signal = df.iloc[-2]['signal']
+            curr_signal = latest_signal['signal']
+            
+            if prev_signal != curr_signal:
+                indicators = {
+                    'RSI': latest_signal.get('rsi', 0),
+                    'MACD': latest_signal.get('macd', 0),
+                    'Signal Line': latest_signal.get('macd_signal', 0),
+                    'SMA_20': latest_signal.get('sma_20', 0),
+                    'SMA_50': latest_signal.get('sma_50', 0),
+                    'Signal_Strength': latest_signal.get('signal_strength', 0)
+                }
+                notifier.send_signal(curr_signal, latest_signal['close'], indicators)
+
+    # Technical Summary
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Price", f"${latest_signal['close']:.2f}")
+    if 'rsi' in df.columns:
+        col2.metric("RSI", f"{latest_signal['rsi']:.1f}")
+    if 'sma_20' in df.columns:
+        col3.metric("20 SMA", f"${latest_signal['sma_20']:.2f}")
+
+    # Pattern Detection
+    detected_patterns = list(patterns.keys())
+    if detected_patterns:
+        st.info(f"Detected Patterns: {', '.join(detected_patterns)}")
+
+    # Signal History
+    st.subheader("Recent Signals")
+    signals_df = df[['datetime', 'close', 'signal', 'signal_strength', 'rsi', 'macd']].tail(10)
+    signals_df = signals_df.rename(columns={'datetime': 'Time', 'close': 'Price'})
     st.dataframe(signals_df)
-    
+
     # Auto-refresh
     st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    time.sleep(60)
+    st.rerun()
 
-# Run the dashboard
+
 if __name__ == "__main__":
     create_dashboard()
-    # Auto-refresh every 60 seconds
-    refresh_rate = 60  # seconds
-    time.sleep(refresh_rate)
-    st.experimental_rerun()
