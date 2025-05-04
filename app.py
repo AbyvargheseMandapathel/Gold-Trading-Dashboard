@@ -52,23 +52,25 @@ else:
     notifier = None
 
 def create_dashboard():
+    # Debug: Print selected settings
+    print(f"Selected Period: {period}, Interval: {interval}")
+    
     # Weekend check
     today = datetime.today().weekday()
     if today >= 5:  # Saturday/Sunday
         st.warning("⚠️ Market is closed (Weekend). No live data available.")
-        df = fetch_gold_data(period="5d", interval="1h")  # Fallback
+        df = fetch_gold_data(period=period, interval=interval)  # Fallback
     else:
         with st.spinner("Fetching latest gold data..."):
             df = fetch_gold_data(period=period, interval=interval)
 
     if df.empty:
-        st.error("Failed to fetch data. Check internet connection.")
+        st.error("❌ Failed to fetch data. Check your internet connection or try a different time range.")
         return
 
+    # Calculate technical indicators and signals
     df = add_indicators(df)
     df = generate_signals(df)
-
-    # Identify support/resistance and patterns
     support_levels, resistance_levels = identify_support_resistance(df)
     patterns = identify_patterns(df)
 
@@ -222,10 +224,12 @@ def create_dashboard():
     signals_df = signals_df.rename(columns={'datetime': 'Time', 'close': 'Price'})
     st.dataframe(signals_df)
 
-    # Auto-refresh
+    # Auto-refresh control
     st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    time.sleep(60)
-    st.rerun()
+    st.write("Fetching data with:", period, interval)
+    if st.button("Refresh Data"):
+        st.rerun()
 
 if __name__ == "__main__":
     create_dashboard()
+    
