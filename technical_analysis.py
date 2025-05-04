@@ -1,20 +1,14 @@
 import pandas as pd
 import numpy as np
-
-def identify_support_resistance(df, window=20):
-    """Identify support and resistance levels based on rolling min/max"""
-    if df.empty or 'low' not in df.columns or 'high' not in df.columns:
-        return [], []
-
-    support = df['low'].rolling(window=window).min().iloc[-window:]
-    resistance = df['high'].rolling(window=window).max().iloc[-window:]
-    return support.values, resistance.values
-
+import talib
 
 def add_indicators(df):
-    """Add technical indicators like SMA, EMA, RSI, MACD, Bollinger Bands"""
+    """Add technical indicators like SMA, EMA, RSI, Bollinger Bands"""
     if df.empty:
         return df
+
+    # Ensure column names are lowercase
+    df.columns = [col.lower() if isinstance(col, str) else col for col in df.columns]
 
     # Moving Averages
     df['sma_20'] = df['close'].rolling(window=20).mean()
@@ -40,39 +34,28 @@ def add_indicators(df):
     return df
 
 
-def generate_signals(df):
-    """Generate buy/sell signals based on technical indicators"""
-    if df.empty:
-        return df
+def identify_support_resistance(df, window=20):
+    """Identify support and resistance levels based on rolling min/max"""
+    if df.empty or 'low' not in df.columns or 'high' not in df.columns:
+        return [], []
 
-    df['signal'] = 'HOLD'
-    df['signal_strength'] = 0.0
-
-    if 'rsi' in df.columns:
-        df.loc[df['rsi'] < 30, 'signal'] = 'BUY'
-        df.loc[df['rsi'] > 70, 'signal'] = 'SELL'
-
-    if 'sma_20' in df.columns and 'sma_50' in df.columns:
-        df['signal_strength'] += np.where(df['sma_20'] > df['sma_50'], 0.5, -0.5)
-
-    if 'macd' in df.columns and 'macd_signal' in df.columns:
-        df['signal_strength'] += np.where(df['macd'] > df['macd_signal'], 0.5, -0.5)
-
-    return df
+    support = df['low'].rolling(window=window).min().iloc[-window:]
+    resistance = df['high'].rolling(window=window).max().iloc[-window:]
+    
+    return support.values, resistance.values
 
 
 def identify_patterns(df):
     """Detect candlestick patterns using TA-Lib"""
-    patterns = {}
-
-    if len(df) < 14:
-        return patterns
+    if df.empty or len(df) < 14:
+        return {}
 
     try:
         hammer = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
         engulfing = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])
         shooting_star = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
 
+        patterns = {}
         if (hammer != 0).any():
             patterns['Hammer'] = hammer[hammer != 0].index.tolist()
         if (engulfing != 0).any():
@@ -80,7 +63,32 @@ def identify_patterns(df):
         if (shooting_star != 0).any():
             patterns['Shooting Star'] = shooting_star[shooting_star != 0].index.tolist()
 
+        return patterns
+
     except Exception as e:
         print("Pattern detection failed:", e)
+        return {}
 
-    return patterns
+
+def generate_signals(df):
+    """Generate BUY/SELL signals based on technical indicators"""
+    if df.empty:
+        return df
+
+    df['signal'] = 'HOLD'
+    df['signal_strength'] = 0.0
+
+    # RSI-based signal
+    if 'rsi' in df.columns:
+        df.loc[df['rsi'] < 30, 'signal'] = 'BUY'
+        df.loc[df['rsi'] > 70, 'signal'] = 'SELL'
+
+    # SMA crossover
+    if 'sma_20' in df.columns and 'sma_50' in df.columns:
+        df['signal_strength'] += np.where(df['sma_20'] > df['sma_50'], 0.5, -0.5)
+
+    # MACD crossover
+    if 'macd' in df.columns and 'macd_signal' in df.columns:
+        df['signal_strength'] += np.where(df['macd'] > df['macd_signal'], 0.5, -0.5)
+
+    return df

@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import time
-
 # Import modules
 from data_fetcher import fetch_gold_data_alpha_vantage as fetch_gold_data
 from technical_analysis import add_indicators, generate_signals, identify_support_resistance, identify_patterns
@@ -15,33 +14,33 @@ import talib
 st.set_page_config(page_title="Gold Trading Dashboard", layout="wide")
 st.title("📈 Live XAU/USD Trading Dashboard")
 
-# Sidebar Settings
+# Sidebar for settings
 st.sidebar.header("Settings")
 
-# Time Period Selector
+# Data settings
+st.sidebar.subheader("Data Settings")
 period = st.sidebar.selectbox(
-    "Select Time Period",
-    ["1d", "2d", "3d", "5d", "7d", "30d", "1mo", "3mo", "6mo", "1y"],
-    index=3
+    "Time Period",
+    ["1d", "2d","5d","7d","1mo", "3mo", "6mo", "1y"],
+    index=1
 )
 
-interval_options = {
-    "1d": "1m",
-    "2d": "5m",
-    "3d": "5m",
-    "5d": "15m",
-    "7d": "15m",
-    "30d": "1h",
-    "1mo": "1h",
-    "3mo": "1d",
-    "6mo": "1d",
-    "1y": "1d"
-}
-interval = interval_options.get(period, "1d")
+interval = st.sidebar.selectbox(
+    "Interval",
+    ["1m", "5m", "15m", "30m", "1h", "1d"],
+    index=2
+)
+
+# Technical indicators settings
+st.sidebar.subheader("Technical Indicators")
+show_sma = st.sidebar.checkbox("Show SMA", value=True)
+show_ema = st.sidebar.checkbox("Show EMA", value=True)
+show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
+show_support_resistance = st.sidebar.checkbox("Show Support/Resistance", value=True)
+show_patterns = st.sidebar.checkbox("Show Patterns", value=True)
 
 # Telegram Alerts
-enable_telegram = st.sidebar.checkbox("Enable Telegram Alerts")
-notifier = None
+enable_telegram = st.sidebar.checkbox("Enable Telegram Alerts", value=False)
 if enable_telegram:
     telegram_token = st.sidebar.text_input("Telegram Bot Token", type="password")
     chat_id = st.sidebar.text_input("Telegram Chat ID")
@@ -49,31 +48,8 @@ if enable_telegram:
         notifier = TelegramNotifier(telegram_token, chat_id)
     else:
         st.sidebar.warning("Enter both Telegram Bot Token and Chat ID to enable alerts")
-
-def identify_patterns(df):
-    """Detect candlestick patterns using TA-Lib"""
-    patterns = {}
-    
-    if len(df) < 14:
-        return patterns
-    
-    try:
-        hammer = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
-        engulfing = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])
-        shooting_star = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
-        
-        if (hammer != 0).any():
-            patterns['Hammer'] = hammer[hammer != 0].index.tolist()
-        if (engulfing != 0).any():
-            patterns['Engulfing'] = engulfing[engulfing != 0].index.tolist()
-        if (shooting_star != 0).any():
-            patterns['Shooting Star'] = shooting_star[shooting_star != 0].index.tolist()
-
-    except Exception as e:
-        st.warning(f"Pattern detection failed: {e}")
-
-    return patterns
-
+else:
+    notifier = None
 
 def create_dashboard():
     # Weekend check
@@ -87,14 +63,7 @@ def create_dashboard():
 
     if df.empty:
         st.error("Failed to fetch data. Check internet connection.")
-        df = pd.DataFrame({
-            'datetime': pd.date_range(end=pd.Timestamp.today(), periods=50, freq='H'),
-            'open': np.random.uniform(2300, 2350, 50),
-            'high': np.random.uniform(2300, 2350, 50),
-            'low': np.random.uniform(2300, 2350, 50),
-            'close': np.random.uniform(2300, 2350, 50),
-            'volume': np.random.randint(10000, 100000, 50)
-        })
+        return
 
     df = add_indicators(df)
     df = generate_signals(df)
@@ -103,61 +72,111 @@ def create_dashboard():
     support_levels, resistance_levels = identify_support_resistance(df)
     patterns = identify_patterns(df)
 
-    # Show Chart
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        subplot_titles=("Price", "Volume", "RSI"),
-                        vertical_spacing=0.05,
-                        row_heights=[0.6, 0.2, 0.2])
+    # Create main chart
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=("XAU/USD Price", "Volume", "RSI"),
+        row_heights=[0.6, 0.2, 0.2]
+    )
 
-    fig.add_trace(go.Candlestick(
-        x=df['datetime'],
-        open=df['open'],
-        high=df['high'],
-        low=df['low'],
-        close=df['close'],
-        name="Candlesticks"
-    ), row=1, col=1)
+    # Add candlestick chart
+    fig.add_trace(
+        go.Candlestick(
+            x=df['datetime'],
+            open=df['open'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            name="XAU/USD"
+        ),
+        row=1, col=1
+    )
 
-    fig.add_trace(go.Bar(x=df['datetime'], y=df['volume'], name="Volume"), row=2, col=1)
+    # Add moving averages
+    if show_sma:
+        if 'sma_20' in df.columns:
+            fig.add_trace(
+                go.Scatter(x=df['datetime'], y=df['sma_20'], name="SMA 20"),
+                row=1, col=1
+            )
+        if 'sma_50' in df.columns:
+            fig.add_trace(
+                go.Scatter(x=df['datetime'], y=df['sma_50'], name="SMA 50"),
+                row=1, col=1
+            )
 
+    if show_ema:
+        if 'ema_20' in df.columns:
+            fig.add_trace(
+                go.Scatter(x=df['datetime'], y=df['ema_20'], name="EMA 20"),
+                row=1, col=1
+            )
+
+    # Bollinger Bands
+    if show_bollinger:
+        if 'bb_upper' in df.columns and 'bb_lower' in df.columns:
+            fig.add_trace(
+                go.Scatter(x=df['datetime'], y=df['bb_upper'], name="BB Upper"),
+                row=1, col=1
+            )
+            fig.add_trace(
+                go.Scatter(x=df['datetime'], y=df['bb_lower'], name="BB Lower"),
+                row=1, col=1
+            )
+
+    # Volume
+    fig.add_trace(
+        go.Bar(x=df['datetime'], y=df['volume'], name="Volume"),
+        row=2, col=1
+    )
+
+    # RSI
     if 'rsi' in df.columns:
-        fig.add_trace(go.Scatter(x=df['datetime'], y=df['rsi'], name="RSI"), row=3, col=1)
+        fig.add_trace(
+            go.Scatter(x=df['datetime'], y=df['rsi'], name="RSI"),
+            row=3, col=1
+        )
         fig.add_hline(y=70, row=3, col=1, line_dash="dash", line_color="red")
         fig.add_hline(y=30, row=3, col=1, line_dash="dash", line_color="green")
 
-    # Moving Averages
-    if 'sma_20' in df.columns:
-        fig.add_trace(go.Scatter(x=df['datetime'], y=df['sma_20'], name="SMA 20"), row=1, col=1)
-    if 'sma_50' in df.columns:
-        fig.add_trace(go.Scatter(x=df['datetime'], y=df['sma_50'], name="SMA 50"), row=1, col=1)
-    if 'ema_20' in df.columns:
-        fig.add_trace(go.Scatter(x=df['datetime'], y=df['ema_20'], name="EMA 20"), row=1, col=1)
-
-    # Bollinger Bands
-    if 'bb_upper' in df.columns and 'bb_lower' in df.columns:
-        fig.add_trace(go.Scatter(x=df['datetime'], y=df['bb_upper'], name="BB Upper"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df['datetime'], y=df['bb_lower'], name="BB Lower"), row=1, col=1)
-
     # Support & Resistance
     for level in support_levels:
-        fig.add_shape(type="line", x0=df['datetime'].iloc[0], y0=level,
-                      x1=df['datetime'].iloc[-1], y1=level,
-                      line=dict(color="green", dash="dash"), row=1, col=1)
+        fig.add_shape(
+            type="line",
+            x0=df['datetime'].iloc[0],
+            y0=level,
+            x1=df['datetime'].iloc[-1],
+            y1=level,
+            line=dict(color="green", dash="dash"),
+            row=1, col=1
+        )
     for level in resistance_levels:
-        fig.add_shape(type="line", x0=df['datetime'].iloc[0], y0=level,
-                      x1=df['datetime'].iloc[-1], y1=level,
-                      line=dict(color="red", dash="dash"), row=1, col=1)
+        fig.add_shape(
+            type="line",
+            x0=df['datetime'].iloc[0],
+            y0=level,
+            x1=df['datetime'].iloc[-1],
+            y1=level,
+            line=dict(color="red", dash="dash"),
+            row=1, col=1
+        )
 
     # Candlestick Patterns
     for pattern_name, indices in patterns.items():
         for idx in indices:
-            fig.add_annotation(x=df.loc[idx, 'datetime'],
-                               y=df.loc[idx, 'high'] + 5,
-                               text=pattern_name,
-                               showarrow=True,
-                               arrowhead=1,
-                               row=1, col=1)
+            fig.add_annotation(
+                x=df.loc[idx, 'datetime'],
+                y=df.loc[idx, 'high'] + 5,
+                text=pattern_name,
+                showarrow=True,
+                arrowhead=1,
+                row=1, col=1
+            )
 
+    # Layout
     fig.update_layout(height=800, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -172,7 +191,7 @@ def create_dashboard():
         if 'signal' in df.columns and len(df) > 1:
             prev_signal = df.iloc[-2]['signal']
             curr_signal = latest_signal['signal']
-            
+
             if prev_signal != curr_signal:
                 indicators = {
                     'RSI': latest_signal.get('rsi', 0),
@@ -207,7 +226,6 @@ def create_dashboard():
     st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     time.sleep(60)
     st.rerun()
-
 
 if __name__ == "__main__":
     create_dashboard()
